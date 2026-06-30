@@ -1,0 +1,5 @@
+quest-native/build/
+quest-native/debug.keystore
+*.apk
+*.idsig
+.DS_Store

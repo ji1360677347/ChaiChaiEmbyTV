@@ -100,8 +100,17 @@ final class EmbyClient {
         return parseItems(json.getJSONArray("Items"));
     }
 
-    String streamUrl(String id) {
-        return server + "/Videos/" + Uri.encode(id) + "/stream?Static=true&api_key=" + Uri.encode(token);
+    String streamUrl(String id, String mediaSourceId) {
+        String url = server + "/Videos/" + Uri.encode(id) + "/stream?Static=true&api_key=" + Uri.encode(token);
+        if (mediaSourceId != null && !mediaSourceId.isEmpty()) url += "&MediaSourceId=" + Uri.encode(mediaSourceId);
+        return url;
+    }
+
+    InputStream openSubtitle(String itemId, String mediaSourceId, int subtitleIndex) throws Exception {
+        String path = "/Videos/" + Uri.encode(itemId);
+        if (mediaSourceId != null && !mediaSourceId.isEmpty()) path += "/" + Uri.encode(mediaSourceId);
+        path += "/Subtitles/" + subtitleIndex + "/Stream.srt?api_key=" + Uri.encode(token);
+        return requestStream(server + path);
     }
 
     void reportPlaybackStart(String itemId, long positionTicks) throws Exception {
@@ -127,7 +136,7 @@ final class EmbyClient {
     }
 
     private String commonFields() {
-        return "&Fields=Overview,Genres,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber";
+        return "&Fields=Overview,Genres,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber,MediaSources";
     }
 
     private JSONObject getJson(String path) throws Exception {
@@ -204,6 +213,15 @@ final class EmbyClient {
         return out.toByteArray();
     }
 
+    private static InputStream requestStream(String url) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(30000);
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) throw new RuntimeException("HTTP " + code);
+        return conn.getInputStream();
+    }
+
     private static String readText(InputStream input) throws Exception {
         if (input == null) return "";
         BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
@@ -248,6 +266,45 @@ final class EmbyClient {
                 text.append(genres.optString(i));
             }
             item.genres = text.toString();
+        }
+        JSONArray sources = obj.optJSONArray("MediaSources");
+        if (sources != null) {
+            item.detailsLoaded = true;
+            for (int i = 0; i < sources.length(); i++) {
+                JSONObject sourceObj = sources.getJSONObject(i);
+                MediaSourceInfo source = new MediaSourceInfo();
+                source.id = sourceObj.optString("Id");
+                source.name = sourceObj.optString("Name");
+                source.container = sourceObj.optString("Container");
+                source.path = sourceObj.optString("Path");
+                source.bitrate = sourceObj.optLong("Bitrate", 0);
+                source.size = sourceObj.optLong("Size", 0);
+                JSONArray streams = sourceObj.optJSONArray("MediaStreams");
+                if (streams != null) {
+                    for (int j = 0; j < streams.length(); j++) {
+                        JSONObject stream = streams.getJSONObject(j);
+                        String type = stream.optString("Type");
+                        if ("Video".equals(type)) {
+                            source.videoCodec = stream.optString("Codec");
+                            int width = stream.optInt("Width", 0);
+                            int height = stream.optInt("Height", 0);
+                            if (height > 0) source.resolution = height + "P";
+                            else if (width > 0) source.resolution = width + "W";
+                        } else if ("Audio".equals(type) && (source.audioCodec == null || source.audioCodec.isEmpty())) {
+                            source.audioCodec = stream.optString("Codec");
+                        } else if ("Subtitle".equals(type)) {
+                            SubtitleTrack subtitle = new SubtitleTrack();
+                            subtitle.index = stream.optInt("Index", -1);
+                            subtitle.title = stream.optString("Title");
+                            subtitle.language = stream.optString("Language");
+                            subtitle.codec = stream.optString("Codec");
+                            subtitle.external = stream.optBoolean("IsExternal", false);
+                            if (subtitle.index >= 0) item.subtitles.add(subtitle);
+                        }
+                    }
+                }
+                item.mediaSources.add(source);
+            }
         }
         return item;
     }

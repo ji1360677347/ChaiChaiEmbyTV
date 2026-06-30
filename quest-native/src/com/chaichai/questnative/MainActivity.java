@@ -1,11 +1,13 @@
 package com.chaichai.questnative;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.media.MediaFormat;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -32,8 +34,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final String PREFS = "quest_native";
@@ -369,6 +373,39 @@ public class MainActivity extends Activity {
     }
 
     private void showDetail(MediaItem item) {
+        if (item.isPlayable() && !item.detailsLoaded) {
+            currentVideo = null;
+            currentDetail = item;
+            showLoading("加载详情...");
+            new AsyncTask<Void, Void, Object>() {
+                @Override
+                protected Object doInBackground(Void... voids) {
+                    try {
+                        return client.getItem(item.id);
+                    } catch (Exception e) {
+                        return e;
+                    }
+                }
+
+                @Override
+                protected void onPostExecute(Object result) {
+                    if (result instanceof Exception) {
+                        toast(((Exception) result).getMessage());
+                        renderDetail(item);
+                    } else {
+                        MediaItem detail = (MediaItem) result;
+                        detail.selectedMediaSourceId = item.selectedMediaSourceId;
+                        detail.selectedSubtitleIndex = item.selectedSubtitleIndex;
+                        renderDetail(detail);
+                    }
+                }
+            }.execute();
+            return;
+        }
+        renderDetail(item);
+    }
+
+    private void renderDetail(MediaItem item) {
         currentVideo = null;
         currentDetail = item;
         root.removeAllViews();
@@ -428,6 +465,22 @@ public class MainActivity extends Activity {
         TextView danmaku = label("弹幕接口：" + prefs().getString(KEY_DANMAKU_API, AppConfig.DEFAULT_DANMAKU_API));
         danmaku.setTextColor(Color.rgb(174, 184, 198));
         info.addView(danmaku);
+
+        TextView source = label("资源版本：" + item.selectedMediaSourceLabel());
+        source.setTextColor(Color.rgb(174, 184, 198));
+        info.addView(source);
+        TextView subtitle = label("字幕：" + item.selectedSubtitleLabel());
+        subtitle.setTextColor(Color.rgb(174, 184, 198));
+        info.addView(subtitle);
+
+        LinearLayout selectors = horizontal();
+        Button sourceButton = button("版本");
+        Button subtitleButton = button("字幕");
+        selectors.addView(sourceButton, new LinearLayout.LayoutParams(dp(150), dp(54)));
+        selectors.addView(subtitleButton, new LinearLayout.LayoutParams(dp(150), dp(54)));
+        info.addView(selectors);
+        sourceButton.setOnClickListener(v -> showSourceChooser(item, false, null, null));
+        subtitleButton.setOnClickListener(v -> showSubtitleChooser(item, null));
 
         Button play = button(item.playbackPositionTicks > 0 && !item.played ? "继续播放" : "播放");
         info.addView(play, new LinearLayout.LayoutParams(dp(180), dp(56)));
@@ -546,7 +599,7 @@ public class MainActivity extends Activity {
         content.addView(proxyPort, settingsInputParams());
 
         content.addView(sectionTitle("关于"));
-        content.addView(settingText("版本", "ChaiChai Quest Native 0.5.0"));
+        content.addView(settingText("版本", "ChaiChai Quest Native 0.7.0"));
         content.addView(settingText("默认弹幕接口", AppConfig.DEFAULT_DANMAKU_API));
 
         LinearLayout actions = horizontal();
@@ -615,10 +668,14 @@ public class MainActivity extends Activity {
         Button rewind = button("-10秒");
         Button pause = button("暂停");
         Button forward = button("+30秒");
+        Button sourceButton = button("版本");
+        Button subtitleButton = button("字幕");
         row.addView(back, new LinearLayout.LayoutParams(dp(140), dp(54)));
         row.addView(rewind, new LinearLayout.LayoutParams(dp(140), dp(54)));
         row.addView(pause, new LinearLayout.LayoutParams(dp(140), dp(54)));
         row.addView(forward, new LinearLayout.LayoutParams(dp(140), dp(54)));
+        row.addView(sourceButton, new LinearLayout.LayoutParams(dp(140), dp(54)));
+        row.addView(subtitleButton, new LinearLayout.LayoutParams(dp(140), dp(54)));
         controls.addView(row);
 
         back.setOnClickListener(v -> {
@@ -627,6 +684,8 @@ public class MainActivity extends Activity {
         });
         rewind.setOnClickListener(v -> seekBy(-10000, item, progress, seekBar));
         forward.setOnClickListener(v -> seekBy(30000, item, progress, seekBar));
+        sourceButton.setOnClickListener(v -> showSourceChooser(item, true, progress, seekBar));
+        subtitleButton.setOnClickListener(v -> showSubtitleChooser(item, video));
         pause.setOnClickListener(v -> {
             if (video.isPlaying()) {
                 video.pause();
@@ -663,13 +722,15 @@ public class MainActivity extends Activity {
                 userSeeking = false;
             }
         });
-        video.setVideoURI(Uri.parse(client.streamUrl(item.id)));
+        MediaSourceInfo source = item.selectedMediaSource();
+        video.setVideoURI(Uri.parse(client.streamUrl(item.id, source == null ? null : source.id)));
         video.setOnPreparedListener(mp -> {
             mp.setLooping(false);
             if (prefs().getBoolean(KEY_RESUME_PLAYBACK, true) && item.playbackPositionTicks > 0 && !item.played) {
                 int positionMs = (int) Math.min(Integer.MAX_VALUE, item.playbackPositionTicks / 10000L);
                 video.seekTo(positionMs);
             }
+            if (item.selectedSubtitleIndex >= 0) loadSubtitle(video, item);
             video.start();
             reportPlaybackStart(item);
             startProgressReporter(item, progress, seekBar);
@@ -688,6 +749,93 @@ public class MainActivity extends Activity {
             toast("播放失败: " + what);
             return true;
         });
+    }
+
+    private void showSourceChooser(MediaItem item, boolean restartPlayback, TextView progress, SeekBar seekBar) {
+        if (item.mediaSources.isEmpty()) {
+            toast("没有可切换的资源版本");
+            return;
+        }
+        String[] labels = new String[item.mediaSources.size()];
+        int checked = 0;
+        for (int i = 0; i < item.mediaSources.size(); i++) {
+            MediaSourceInfo source = item.mediaSources.get(i);
+            labels[i] = source.label() + "\n" + source.subLabel();
+            if (source.id != null && source.id.equals(item.selectedMediaSourceId)) checked = i;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("资源版本")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    MediaSourceInfo source = item.mediaSources.get(which);
+                    item.selectedMediaSourceId = source.id;
+                    dialog.dismiss();
+                    if (restartPlayback && currentVideo != null) {
+                        item.playbackPositionTicks = currentVideo.getCurrentPosition() * 10000L;
+                        stopPlaybackAndReport();
+                        play(item);
+                    } else {
+                        showDetail(item);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showSubtitleChooser(MediaItem item, VideoView video) {
+        ArrayList<String> labels = new ArrayList<>();
+        labels.add("禁用字幕");
+        for (SubtitleTrack track : item.subtitles) labels.add(track.label());
+        new AlertDialog.Builder(this)
+                .setTitle("字幕")
+                .setSingleChoiceItems(labels.toArray(new String[0]), selectedSubtitleChoice(item), (dialog, which) -> {
+                    if (which == 0) {
+                        item.selectedSubtitleIndex = -1;
+                    } else {
+                        item.selectedSubtitleIndex = item.subtitles.get(which - 1).index;
+                        if (video != null) loadSubtitle(video, item);
+                    }
+                    dialog.dismiss();
+                    if (video == null) showDetail(item);
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private int selectedSubtitleChoice(MediaItem item) {
+        if (item.selectedSubtitleIndex < 0) return 0;
+        for (int i = 0; i < item.subtitles.size(); i++) {
+            if (item.subtitles.get(i).index == item.selectedSubtitleIndex) return i + 1;
+        }
+        return 0;
+    }
+
+    private void loadSubtitle(VideoView video, MediaItem item) {
+        MediaSourceInfo source = item.selectedMediaSource();
+        new AsyncTask<Void, Void, Object>() {
+            @Override
+            protected Object doInBackground(Void... voids) {
+                try {
+                    return client.openSubtitle(item.id, source == null ? null : source.id, item.selectedSubtitleIndex);
+                } catch (Exception e) {
+                    return e;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Object result) {
+                if (result instanceof Exception) {
+                    toast("字幕加载失败");
+                    return;
+                }
+                try {
+                    MediaFormat format = MediaFormat.createSubtitleFormat("application/x-subrip", Locale.getDefault().getLanguage());
+                    video.addSubtitleSource((InputStream) result, format);
+                    toast("已加载字幕");
+                } catch (Exception e) {
+                    toast("字幕格式不支持");
+                }
+            }
+        }.execute();
     }
 
     private void loadImage(String id, ImageView target) {

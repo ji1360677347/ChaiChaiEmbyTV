@@ -15,6 +15,11 @@ final class MediaItem {
     long playbackPositionTicks;
     boolean hasPrimaryImage;
     boolean played;
+    boolean detailsLoaded;
+    String selectedMediaSourceId;
+    int selectedSubtitleIndex = -1;
+    final java.util.ArrayList<MediaSourceInfo> mediaSources = new java.util.ArrayList<>();
+    final java.util.ArrayList<SubtitleTrack> subtitles = new java.util.ArrayList<>();
 
     boolean isFolderLike() {
         return "CollectionFolder".equals(type) || "Folder".equals(type) || "Series".equals(type) || "Season".equals(type);
@@ -66,6 +71,29 @@ final class MediaItem {
         if (played) return "已看完";
         if (playbackPositionTicks <= 0) return "";
         return "上次看到 " + positionText(playbackPositionTicks);
+    }
+
+    MediaSourceInfo selectedMediaSource() {
+        if (mediaSources.isEmpty()) return null;
+        if (selectedMediaSourceId != null) {
+            for (MediaSourceInfo source : mediaSources) {
+                if (selectedMediaSourceId.equals(source.id)) return source;
+            }
+        }
+        return mediaSources.get(0);
+    }
+
+    String selectedMediaSourceLabel() {
+        MediaSourceInfo source = selectedMediaSource();
+        return source == null ? "默认资源" : source.label();
+    }
+
+    String selectedSubtitleLabel() {
+        if (selectedSubtitleIndex < 0) return "禁用字幕";
+        for (SubtitleTrack track : subtitles) {
+            if (track.index == selectedSubtitleIndex) return track.label();
+        }
+        return "禁用字幕";
     }
 
     static String positionText(long ticks) {

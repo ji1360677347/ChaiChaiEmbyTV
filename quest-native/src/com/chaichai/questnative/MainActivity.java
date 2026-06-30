@@ -9,6 +9,8 @@ import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -42,6 +44,8 @@ public class MainActivity extends Activity {
     private final ArrayList<NavEntry> backStack = new ArrayList<>();
     private MediaItem currentDetail;
     private VideoView currentVideo;
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private Runnable progressRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -234,7 +238,7 @@ public class MainActivity extends Activity {
         card.addView(image, new LinearLayout.LayoutParams(-1, dp(220)));
         if (item.hasPrimaryImage) loadImage(item.id, image);
 
-        TextView name = label(item.name);
+        TextView name = label(item.displayName());
         name.setTextColor(Color.WHITE);
         name.setMaxLines(2);
         card.addView(name, new LinearLayout.LayoutParams(-1, -2));
@@ -269,7 +273,7 @@ public class MainActivity extends Activity {
         page.addView(toolbar, new LinearLayout.LayoutParams(-1, dp(62)));
 
         Button back = button("返回");
-        TextView title = title(item.name);
+        TextView title = title(item.displayName());
         title.setTextColor(Color.WHITE);
         toolbar.addView(back, new LinearLayout.LayoutParams(dp(86), dp(44)));
         toolbar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
@@ -289,7 +293,7 @@ public class MainActivity extends Activity {
         info.setPadding(dp(28), 0, 0, 0);
         content.addView(info, new LinearLayout.LayoutParams(0, -1, 1));
 
-        TextView name = title(item.name);
+        TextView name = title(item.displayName());
         name.setTextColor(Color.WHITE);
         name.setTextSize(30);
         info.addView(name);
@@ -297,6 +301,13 @@ public class MainActivity extends Activity {
         TextView meta = label(item.subtitle());
         meta.setTextColor(Color.rgb(174, 184, 198));
         info.addView(meta);
+
+        String progress = item.progressText();
+        if (!progress.isEmpty()) {
+            TextView progressView = label(progress);
+            progressView.setTextColor(Color.rgb(126, 211, 166));
+            info.addView(progressView);
+        }
 
         TextView overview = label(item.overview == null || item.overview.isEmpty() ? "暂无简介" : item.overview);
         overview.setTextColor(Color.rgb(221, 228, 238));
@@ -308,7 +319,7 @@ public class MainActivity extends Activity {
         danmaku.setTextColor(Color.rgb(174, 184, 198));
         info.addView(danmaku);
 
-        Button play = button("播放");
+        Button play = button(item.playbackPositionTicks > 0 && !item.played ? "继续播放" : "播放");
         info.addView(play, new LinearLayout.LayoutParams(dp(180), dp(56)));
         play.setOnClickListener(v -> play(item));
     }
@@ -399,6 +410,7 @@ public class MainActivity extends Activity {
     }
 
     private void play(MediaItem item) {
+        stopProgressReporter();
         currentDetail = item;
         root.removeAllViews();
         FrameLayout player = new FrameLayout(this);
@@ -414,9 +426,13 @@ public class MainActivity extends Activity {
         controls.setBackgroundColor(Color.argb(150, 0, 0, 0));
         player.addView(controls, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
 
-        TextView title = title(item.name);
+        TextView title = title(item.displayName());
         title.setTextColor(Color.WHITE);
         controls.addView(title);
+
+        TextView progress = label("00:00 / " + item.runtimeText());
+        progress.setTextColor(Color.rgb(221, 228, 238));
+        controls.addView(progress);
 
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -426,21 +442,32 @@ public class MainActivity extends Activity {
         row.addView(pause, new LinearLayout.LayoutParams(dp(140), dp(54)));
         controls.addView(row);
 
-        back.setOnClickListener(v -> showDetail(item));
+        back.setOnClickListener(v -> {
+            stopPlaybackAndReport();
+            showDetail(item);
+        });
         pause.setOnClickListener(v -> {
             if (video.isPlaying()) {
                 video.pause();
                 pause.setText("播放");
+                reportPlaybackProgress(item, true);
             } else {
                 video.start();
                 pause.setText("暂停");
+                reportPlaybackProgress(item, false);
             }
         });
         video.setOnClickListener(v -> pause.performClick());
         video.setVideoURI(Uri.parse(client.streamUrl(item.id)));
         video.setOnPreparedListener(mp -> {
             mp.setLooping(false);
+            if (item.playbackPositionTicks > 0 && !item.played) {
+                int positionMs = (int) Math.min(Integer.MAX_VALUE, item.playbackPositionTicks / 10000L);
+                video.seekTo(positionMs);
+            }
             video.start();
+            reportPlaybackStart(item);
+            startProgressReporter(item, progress);
         });
         video.setOnErrorListener((mp, what, extra) -> {
             toast("播放失败: " + what);
@@ -468,8 +495,7 @@ public class MainActivity extends Activity {
 
     private void goBack() {
         if (currentVideo != null) {
-            currentVideo.stopPlayback();
-            currentVideo = null;
+            stopPlaybackAndReport();
             if (currentDetail != null) showDetail(currentDetail);
             else showHome();
             return;
@@ -591,6 +617,81 @@ public class MainActivity extends Activity {
 
     private void toast(String message) {
         Toast.makeText(this, message == null ? "发生错误" : message, Toast.LENGTH_LONG).show();
+    }
+
+    private void startProgressReporter(MediaItem item, TextView progress) {
+        stopProgressReporter();
+        progressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (currentVideo == null) return;
+                long positionTicks = currentVideo.getCurrentPosition() * 10000L;
+                long durationTicks = currentVideo.getDuration() > 0 ? currentVideo.getDuration() * 10000L : item.runtimeTicks;
+                progress.setText(MediaItem.positionText(positionTicks) + " / " + MediaItem.positionText(durationTicks));
+                item.playbackPositionTicks = positionTicks;
+                reportPlaybackProgress(item, !currentVideo.isPlaying());
+                progressHandler.postDelayed(this, 10000);
+            }
+        };
+        progressHandler.postDelayed(progressRunnable, 1000);
+    }
+
+    private void stopProgressReporter() {
+        if (progressRunnable != null) {
+            progressHandler.removeCallbacks(progressRunnable);
+            progressRunnable = null;
+        }
+    }
+
+    private void reportPlaybackStart(MediaItem item) {
+        reportPlayback(item, "start", item.playbackPositionTicks, false);
+    }
+
+    private void reportPlaybackProgress(MediaItem item, boolean paused) {
+        if (currentVideo == null) return;
+        reportPlayback(item, "progress", currentVideo.getCurrentPosition() * 10000L, paused);
+    }
+
+    private void stopPlaybackAndReport() {
+        if (currentVideo == null) return;
+        long positionTicks = currentVideo.getCurrentPosition() * 10000L;
+        MediaItem item = currentDetail;
+        stopProgressReporter();
+        currentVideo.stopPlayback();
+        currentVideo = null;
+        if (item != null) {
+            item.playbackPositionTicks = positionTicks;
+            reportPlayback(item, "stop", positionTicks, true);
+        }
+    }
+
+    private void reportPlayback(MediaItem item, String event, long positionTicks, boolean paused) {
+        new AsyncTask<Void, Void, Void>() {
+            @Override
+            protected Void doInBackground(Void... voids) {
+                try {
+                    if ("start".equals(event)) client.reportPlaybackStart(item.id, positionTicks);
+                    else if ("stop".equals(event)) client.reportPlaybackStopped(item.id, positionTicks);
+                    else client.reportPlaybackProgress(item.id, positionTicks, paused);
+                } catch (Exception ignored) {
+                    // 进度同步失败不应该打断本地播放。
+                }
+                return null;
+            }
+        }.execute();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (currentVideo != null && currentVideo.isPlaying()) currentVideo.pause();
+        if (currentDetail != null && currentVideo != null) reportPlaybackProgress(currentDetail, true);
+    }
+
+    @Override
+    protected void onDestroy() {
+        stopPlaybackAndReport();
+        super.onDestroy();
     }
 
     @Override

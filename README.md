@@ -23,9 +23,9 @@
 
 ### Quest 3 原生重做版
 
-Quest 3 推荐安装普通 Android 原生版：[`ChaiChaiQuestNative-0.2.0.apk`](https://github.com/ji1360677347/ChaiChaiEmbyTV/releases/download/v0.3.0-alpha6-quest3-fix/ChaiChaiQuestNative-0.2.0.apk)。
+Quest 3 推荐安装普通 Android 原生版：[`ChaiChaiQuestNative-0.3.0.apk`](https://github.com/ji1360677347/ChaiChaiEmbyTV/releases/download/v0.3.0-alpha6-quest3-fix/ChaiChaiQuestNative-0.3.0.apk)。
 
-这个版本在 `quest-native/` 目录中重做，默认弹幕接口为 `https://logvardanmu.konfan.cn`，支持 Emby 登录、媒体库浏览、搜索、详情页、基础播放和弹幕接口设置。
+这个版本在 `quest-native/` 目录中重做，默认弹幕接口为 `https://logvardanmu.konfan.cn`，支持 Emby 登录、媒体库浏览、搜索、详情页、基础播放、播放进度同步和弹幕接口设置。
 
 ### 前往 [Releases](../../releases/latest) 页面下载最新版本 APK。
 #### Android 5（API 21/22）旧电视兼容版本请前往 [v0.2.9-legacy21](https://github.com/dh374374/ChaiChaiEmbyTV/releases/tag/v0.2.9-legacy21) 下载。

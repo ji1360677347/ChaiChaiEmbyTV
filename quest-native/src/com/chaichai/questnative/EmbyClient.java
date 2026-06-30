@@ -86,6 +86,21 @@ final class EmbyClient {
         return server + "/Videos/" + Uri.encode(id) + "/stream?Static=true&api_key=" + Uri.encode(token);
     }
 
+    void reportPlaybackStart(String itemId, long positionTicks) throws Exception {
+        JSONObject body = playbackBody(itemId, positionTicks, false);
+        postJson("/Sessions/Playing", body);
+    }
+
+    void reportPlaybackProgress(String itemId, long positionTicks, boolean paused) throws Exception {
+        JSONObject body = playbackBody(itemId, positionTicks, paused);
+        postJson("/Sessions/Playing/Progress", body);
+    }
+
+    void reportPlaybackStopped(String itemId, long positionTicks) throws Exception {
+        JSONObject body = playbackBody(itemId, positionTicks, true);
+        postJson("/Sessions/Playing/Stopped", body);
+    }
+
     Bitmap loadPrimaryImage(String id, int width) throws Exception {
         String url = server + "/Items/" + Uri.encode(id) + "/Images/Primary?maxWidth=" + width
                 + "&quality=85&api_key=" + Uri.encode(token);
@@ -94,7 +109,7 @@ final class EmbyClient {
     }
 
     private String commonFields() {
-        return "&Fields=Overview,Genres,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks";
+        return "&Fields=Overview,Genres,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber";
     }
 
     private JSONObject getJson(String path) throws Exception {
@@ -102,7 +117,28 @@ final class EmbyClient {
         return requestJson("GET", server + path + separator + "api_key=" + Uri.encode(token), null, token);
     }
 
+    private void postJson(String path, JSONObject body) throws Exception {
+        String separator = path.contains("?") ? "&" : "?";
+        request("POST", server + path + separator + "api_key=" + Uri.encode(token), body.toString(), token);
+    }
+
+    private JSONObject playbackBody(String itemId, long positionTicks, boolean paused) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("ItemId", itemId);
+        body.put("PositionTicks", Math.max(0, positionTicks));
+        body.put("IsPaused", paused);
+        body.put("PlayMethod", "DirectPlay");
+        body.put("CanSeek", true);
+        return body;
+    }
+
     private static JSONObject requestJson(String method, String url, String body, String token) throws Exception {
+        String text = request(method, url, body, token);
+        if (text.isEmpty()) return new JSONObject();
+        return new JSONObject(text);
+    }
+
+    private static String request(String method, String url, String body, String token) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setRequestMethod(method);
         conn.setConnectTimeout(15000);
@@ -126,7 +162,7 @@ final class EmbyClient {
         if (code < 200 || code >= 300) {
             throw new RuntimeException("HTTP " + code + ": " + text);
         }
-        return new JSONObject(text);
+        return text;
     }
 
     private static byte[] requestBytes(String url) throws Exception {
@@ -169,9 +205,17 @@ final class EmbyClient {
         item.type = obj.optString("Type");
         item.mediaType = obj.optString("MediaType");
         item.overview = obj.optString("Overview");
+        item.seriesName = obj.optString("SeriesName");
         item.year = obj.optInt("ProductionYear", 0);
+        item.seasonNumber = obj.optInt("ParentIndexNumber", 0);
+        item.episodeNumber = obj.optInt("IndexNumber", 0);
         item.runtimeTicks = obj.optLong("RunTimeTicks", 0);
         item.hasPrimaryImage = obj.has("ImageTags") && obj.getJSONObject("ImageTags").has("Primary");
+        JSONObject userData = obj.optJSONObject("UserData");
+        if (userData != null) {
+            item.played = userData.optBoolean("Played", false);
+            item.playbackPositionTicks = userData.optLong("PlaybackPositionTicks", 0);
+        }
         JSONArray genres = obj.optJSONArray("Genres");
         if (genres != null) {
             StringBuilder text = new StringBuilder();

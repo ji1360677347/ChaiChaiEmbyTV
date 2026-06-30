@@ -59,6 +59,24 @@ final class EmbyClient {
         return parseItems(json.getJSONArray("Items"));
     }
 
+    List<MediaItem> getResumeItems() throws Exception {
+        String path = "/Users/" + userId + "/Items/Resume?Recursive=true"
+                + "&MediaTypes=Video"
+                + commonFields()
+                + "&Limit=20";
+        JSONObject json = getJson(path);
+        return parseItems(json.getJSONArray("Items"));
+    }
+
+    List<MediaItem> getLatestItems() throws Exception {
+        String path = "/Users/" + userId + "/Items/Latest?Recursive=true"
+                + "&IncludeItemTypes=Movie,Episode,Video"
+                + commonFields()
+                + "&Limit=30";
+        JSONArray json = getArray(path);
+        return parseItems(json);
+    }
+
     List<MediaItem> getItems(String parentId) throws Exception {
         String path = "/Users/" + userId + "/Items?ParentId=" + Uri.encode(parentId)
                 + commonFields()
@@ -115,6 +133,12 @@ final class EmbyClient {
     private JSONObject getJson(String path) throws Exception {
         String separator = path.contains("?") ? "&" : "?";
         return requestJson("GET", server + path + separator + "api_key=" + Uri.encode(token), null, token);
+    }
+
+    private JSONArray getArray(String path) throws Exception {
+        String separator = path.contains("?") ? "&" : "?";
+        String text = request("GET", server + path + separator + "api_key=" + Uri.encode(token), null, token);
+        return new JSONArray(text);
     }
 
     private void postJson(String path, JSONObject body) throws Exception {

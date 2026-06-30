@@ -22,6 +22,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -149,7 +150,86 @@ public class MainActivity extends Activity {
 
     private void showHome() {
         backStack.clear();
-        loadItems(null, "媒体库", true);
+        loadHome();
+    }
+
+    private void loadHome() {
+        currentVideo = null;
+        currentDetail = null;
+        showLoading("加载首页...");
+        new AsyncTask<Void, Void, HomeResult>() {
+            @Override
+            protected HomeResult doInBackground(Void... voids) {
+                try {
+                    HomeResult result = new HomeResult();
+                    result.resume = client.getResumeItems();
+                    result.latest = client.getLatestItems();
+                    result.libraries = client.getLibraries();
+                    return result;
+                } catch (Exception e) {
+                    return HomeResult.failure(e);
+                }
+            }
+
+            @Override
+            protected void onPostExecute(HomeResult result) {
+                if (result.error != null) showError(result.error.getMessage());
+                else showHomeDashboard(result);
+            }
+        }.execute();
+    }
+
+    private void showHomeDashboard(HomeResult data) {
+        root.removeAllViews();
+        LinearLayout shell = horizontal();
+        shell.setBackgroundColor(Color.rgb(14, 18, 24));
+        root.addView(shell, fill());
+
+        LinearLayout nav = vertical();
+        nav.setPadding(dp(16), dp(24), dp(16), dp(24));
+        nav.setBackgroundColor(Color.rgb(20, 25, 33));
+        shell.addView(nav, new LinearLayout.LayoutParams(dp(190), -1));
+
+        TextView brand = title("ChaiChai");
+        brand.setTextColor(Color.WHITE);
+        brand.setTextSize(25);
+        nav.addView(brand, new LinearLayout.LayoutParams(-1, dp(58)));
+        Button home = navButton("首页");
+        Button libraries = navButton("媒体库");
+        Button search = navButton("搜索");
+        Button settings = navButton("设置");
+        Button logout = navButton("退出");
+        nav.addView(home);
+        nav.addView(libraries);
+        nav.addView(search);
+        nav.addView(settings);
+        nav.addView(logout);
+
+        home.setOnClickListener(v -> loadHome());
+        libraries.setOnClickListener(v -> loadItems(null, "媒体库", true));
+        search.setOnClickListener(v -> showSearch());
+        settings.setOnClickListener(v -> showSettings());
+        logout.setOnClickListener(v -> {
+            prefs().edit().remove(KEY_TOKEN).remove(KEY_USER_ID).apply();
+            client = null;
+            showLogin();
+        });
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = vertical();
+        content.setPadding(dp(28), dp(24), dp(28), dp(32));
+        scroll.addView(content);
+        shell.addView(scroll, new LinearLayout.LayoutParams(0, -1, 1));
+
+        TextView title = title("首页");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(32);
+        content.addView(title);
+        content.addView(labelWhite("快速继续、发现最新内容，或进入媒体库浏览。"));
+
+        if (!data.resume.isEmpty()) content.addView(rowSection("继续观看", data.resume, true));
+        if (!data.latest.isEmpty()) content.addView(rowSection("最新添加", data.latest, true));
+        if (!data.libraries.isEmpty()) content.addView(rowSection("媒体库", data.libraries, false));
     }
 
     private void loadItems(String parentId, String title, boolean replaceCurrent) {
@@ -265,6 +345,27 @@ public class MainActivity extends Activity {
             }
         });
         return card;
+    }
+
+    private View rowSection(String titleText, List<MediaItem> items, boolean playableRow) {
+        LinearLayout section = vertical();
+        section.setPadding(0, dp(20), 0, dp(4));
+        TextView heading = sectionTitle(titleText);
+        section.addView(heading);
+
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = horizontal();
+        row.setPadding(0, 0, dp(12), 0);
+        scroll.addView(row);
+        section.addView(scroll, new LinearLayout.LayoutParams(-1, dp(328)));
+
+        for (MediaItem item : items) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(190), dp(308));
+            params.setMargins(0, 0, dp(14), 0);
+            row.addView(card(item), params);
+        }
+        return section;
     }
 
     private void showDetail(MediaItem item) {
@@ -687,6 +788,12 @@ public class MainActivity extends Activity {
         return view;
     }
 
+    private TextView labelWhite(String text) {
+        TextView view = label(text);
+        view.setTextColor(Color.rgb(174, 184, 198));
+        return view;
+    }
+
     private TextView sectionTitle(String text) {
         TextView view = title(text);
         view.setTextColor(Color.WHITE);
@@ -729,6 +836,16 @@ public class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setFocusable(true);
         button.setMinHeight(dp(44));
+        return button;
+    }
+
+    private Button navButton(String text) {
+        Button button = button(text);
+        button.setGravity(Gravity.CENTER_VERTICAL);
+        button.setTextSize(17);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
+        params.setMargins(0, dp(5), 0, dp(5));
+        button.setLayoutParams(params);
         return button;
     }
 
@@ -890,6 +1007,19 @@ public class MainActivity extends Activity {
 
         static LoadResult failure(Exception error) {
             return new LoadResult(null, error);
+        }
+    }
+
+    private static final class HomeResult {
+        List<MediaItem> resume = new ArrayList<>();
+        List<MediaItem> latest = new ArrayList<>();
+        List<MediaItem> libraries = new ArrayList<>();
+        Exception error;
+
+        static HomeResult failure(Exception error) {
+            HomeResult result = new HomeResult();
+            result.error = error;
+            return result;
         }
     }
 }

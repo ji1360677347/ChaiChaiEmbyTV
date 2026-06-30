@@ -18,6 +18,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
@@ -39,6 +40,12 @@ public class MainActivity extends Activity {
     private static final String KEY_TOKEN = "token";
     private static final String KEY_USER_ID = "user_id";
     private static final String KEY_DANMAKU_API = "danmaku_api";
+    private static final String KEY_DANMAKU_API_PREFIX = "danmaku_api_";
+    private static final String KEY_AUTO_NEXT = "auto_next";
+    private static final String KEY_RESUME_PLAYBACK = "resume_playback";
+    private static final String KEY_PROXY_ENABLED = "proxy_enabled";
+    private static final String KEY_PROXY_HOST = "proxy_host";
+    private static final String KEY_PROXY_PORT = "proxy_port";
 
     private FrameLayout root;
     private EmbyClient client;
@@ -380,35 +387,95 @@ public class MainActivity extends Activity {
     private void showSettings() {
         root.removeAllViews();
         LinearLayout page = vertical();
-        page.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.setPadding(dp(48), dp(42), dp(48), dp(24));
-        page.setBackgroundColor(Color.rgb(245, 247, 250));
+        page.setBackgroundColor(Color.rgb(14, 18, 24));
         root.addView(page, fill());
 
+        LinearLayout toolbar = horizontal();
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(dp(12), 0, dp(12), 0);
+        toolbar.setBackgroundColor(Color.rgb(24, 30, 39));
+        page.addView(toolbar, new LinearLayout.LayoutParams(-1, dp(62)));
+
+        Button backTop = button("返回");
         TextView title = title("设置");
-        page.addView(title);
-        EditText danmaku = input("弹幕接口");
-        danmaku.setText(prefs().getString(KEY_DANMAKU_API, AppConfig.DEFAULT_DANMAKU_API));
-        page.addView(danmaku, wideInputParams());
+        title.setTextColor(Color.WHITE);
+        toolbar.addView(backTop, new LinearLayout.LayoutParams(dp(86), dp(44)));
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        backTop.setOnClickListener(v -> goBack());
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = vertical();
+        content.setPadding(dp(36), dp(24), dp(36), dp(32));
+        scroll.addView(content);
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        SharedPreferences prefs = prefs();
+        content.addView(sectionTitle("服务器"));
+        TextView server = settingText("当前服务器", prefs.getString(KEY_SERVER, "未登录"));
+        content.addView(server);
+
+        content.addView(sectionTitle("弹幕"));
+        EditText[] danmakuInputs = new EditText[5];
+        for (int i = 0; i < danmakuInputs.length; i++) {
+            EditText input = input("弹幕 API " + (i + 1));
+            String key = i == 0 ? KEY_DANMAKU_API : KEY_DANMAKU_API_PREFIX + (i + 1);
+            input.setText(prefs.getString(key, i == 0 ? AppConfig.DEFAULT_DANMAKU_API : ""));
+            input.setSingleLine(true);
+            content.addView(input, settingsInputParams());
+            danmakuInputs[i] = input;
+        }
+
+        content.addView(sectionTitle("播放"));
+        CheckBox resume = checkBox("启动播放时自动从上次进度继续");
+        resume.setChecked(prefs.getBoolean(KEY_RESUME_PLAYBACK, true));
+        content.addView(resume);
+        CheckBox autoNext = checkBox("剧集播放完成后自动播放下一集");
+        autoNext.setChecked(prefs.getBoolean(KEY_AUTO_NEXT, false));
+        content.addView(autoNext);
+
+        content.addView(sectionTitle("代理"));
+        CheckBox proxyEnabled = checkBox("启用 HTTP/SOCKS 代理");
+        proxyEnabled.setChecked(prefs.getBoolean(KEY_PROXY_ENABLED, false));
+        content.addView(proxyEnabled);
+        EditText proxyHost = input("代理地址，例如 192.168.1.2");
+        proxyHost.setText(prefs.getString(KEY_PROXY_HOST, ""));
+        content.addView(proxyHost, settingsInputParams());
+        EditText proxyPort = input("代理端口，例如 7890");
+        proxyPort.setText(prefs.getString(KEY_PROXY_PORT, ""));
+        content.addView(proxyPort, settingsInputParams());
+
+        content.addView(sectionTitle("关于"));
+        content.addView(settingText("版本", "ChaiChai Quest Native 0.5.0"));
+        content.addView(settingText("默认弹幕接口", AppConfig.DEFAULT_DANMAKU_API));
 
         LinearLayout actions = horizontal();
-        actions.setGravity(Gravity.CENTER);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(0, dp(18), 0, 0);
         Button save = button("保存");
         Button back = button("返回");
-        actions.addView(save, new LinearLayout.LayoutParams(dp(160), dp(54)));
-        actions.addView(back, new LinearLayout.LayoutParams(dp(160), dp(54)));
-        page.addView(actions);
+        actions.addView(save, new LinearLayout.LayoutParams(dp(180), dp(56)));
+        actions.addView(back, new LinearLayout.LayoutParams(dp(180), dp(56)));
+        content.addView(actions);
 
         save.setOnClickListener(v -> {
-            String value = danmaku.getText().toString().trim();
-            if (value.isEmpty()) value = AppConfig.DEFAULT_DANMAKU_API;
-            prefs().edit().putString(KEY_DANMAKU_API, value).apply();
+            SharedPreferences.Editor editor = prefs().edit();
+            for (int i = 0; i < danmakuInputs.length; i++) {
+                String value = danmakuInputs[i].getText().toString().trim();
+                if (i == 0 && value.isEmpty()) value = AppConfig.DEFAULT_DANMAKU_API;
+                String key = i == 0 ? KEY_DANMAKU_API : KEY_DANMAKU_API_PREFIX + (i + 1);
+                editor.putString(key, value);
+            }
+            editor.putBoolean(KEY_RESUME_PLAYBACK, resume.isChecked());
+            editor.putBoolean(KEY_AUTO_NEXT, autoNext.isChecked());
+            editor.putBoolean(KEY_PROXY_ENABLED, proxyEnabled.isChecked());
+            editor.putString(KEY_PROXY_HOST, proxyHost.getText().toString().trim());
+            editor.putString(KEY_PROXY_PORT, proxyPort.getText().toString().trim());
+            editor.apply();
             toast("已保存");
             goBack();
         });
         back.setOnClickListener(v -> goBack());
-        danmaku.requestFocus();
-        danmaku.postDelayed(() -> showKeyboard(danmaku), 250);
+        danmakuInputs[0].requestFocus();
     }
 
     private void play(MediaItem item) {
@@ -498,7 +565,7 @@ public class MainActivity extends Activity {
         video.setVideoURI(Uri.parse(client.streamUrl(item.id)));
         video.setOnPreparedListener(mp -> {
             mp.setLooping(false);
-            if (item.playbackPositionTicks > 0 && !item.played) {
+            if (prefs().getBoolean(KEY_RESUME_PLAYBACK, true) && item.playbackPositionTicks > 0 && !item.played) {
                 int positionMs = (int) Math.min(Integer.MAX_VALUE, item.playbackPositionTicks / 10000L);
                 video.seekTo(positionMs);
             }
@@ -514,6 +581,7 @@ public class MainActivity extends Activity {
             pause.setText("播放");
             progress.setText("已播放完成");
             seekBar.setProgress(1000);
+            if (prefs().getBoolean(KEY_AUTO_NEXT, false)) toast("自动下一集将在后续版本接入");
         });
         video.setOnErrorListener((mp, what, extra) -> {
             toast("播放失败: " + what);
@@ -619,6 +687,34 @@ public class MainActivity extends Activity {
         return view;
     }
 
+    private TextView sectionTitle(String text) {
+        TextView view = title(text);
+        view.setTextColor(Color.WHITE);
+        view.setTextSize(20);
+        view.setPadding(0, dp(18), 0, dp(8));
+        return view;
+    }
+
+    private TextView settingText(String name, String value) {
+        TextView view = label(name + "\n" + value);
+        view.setTextColor(Color.rgb(221, 228, 238));
+        view.setTextSize(16);
+        view.setBackgroundColor(Color.rgb(32, 39, 49));
+        view.setPadding(dp(16), dp(12), dp(16), dp(12));
+        return view;
+    }
+
+    private CheckBox checkBox(String text) {
+        CheckBox box = new CheckBox(this);
+        box.setText(text);
+        box.setTextSize(16);
+        box.setTextColor(Color.rgb(221, 228, 238));
+        box.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(126, 211, 166)));
+        box.setPadding(dp(12), dp(8), dp(12), dp(8));
+        box.setFocusable(true);
+        return box;
+    }
+
     private EditText input(String hint) {
         EditText input = new EditText(this);
         input.setHint(hint);
@@ -645,6 +741,12 @@ public class MainActivity extends Activity {
     private LinearLayout.LayoutParams wideButtonParams() {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(Math.min(dp(620), getResources().getDisplayMetrics().widthPixels - dp(96)), dp(54));
         params.setMargins(0, dp(18), 0, 0);
+        return params;
+    }
+
+    private LinearLayout.LayoutParams settingsInputParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(58));
+        params.setMargins(0, dp(6), 0, dp(6));
         return params;
     }
 

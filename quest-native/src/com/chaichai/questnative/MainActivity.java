@@ -25,6 +25,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
@@ -46,6 +47,7 @@ public class MainActivity extends Activity {
     private VideoView currentVideo;
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private Runnable progressRunnable;
+    private boolean userSeeking;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -434,18 +436,29 @@ public class MainActivity extends Activity {
         progress.setTextColor(Color.rgb(221, 228, 238));
         controls.addView(progress);
 
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setMax(1000);
+        seekBar.setFocusable(true);
+        controls.addView(seekBar, new LinearLayout.LayoutParams(-1, dp(42)));
+
         LinearLayout row = horizontal();
         row.setGravity(Gravity.CENTER_VERTICAL);
         Button back = button("返回");
+        Button rewind = button("-10秒");
         Button pause = button("暂停");
+        Button forward = button("+30秒");
         row.addView(back, new LinearLayout.LayoutParams(dp(140), dp(54)));
+        row.addView(rewind, new LinearLayout.LayoutParams(dp(140), dp(54)));
         row.addView(pause, new LinearLayout.LayoutParams(dp(140), dp(54)));
+        row.addView(forward, new LinearLayout.LayoutParams(dp(140), dp(54)));
         controls.addView(row);
 
         back.setOnClickListener(v -> {
             stopPlaybackAndReport();
             showDetail(item);
         });
+        rewind.setOnClickListener(v -> seekBy(-10000, item, progress, seekBar));
+        forward.setOnClickListener(v -> seekBy(30000, item, progress, seekBar));
         pause.setOnClickListener(v -> {
             if (video.isPlaying()) {
                 video.pause();
@@ -458,6 +471,30 @@ public class MainActivity extends Activity {
             }
         });
         video.setOnClickListener(v -> pause.performClick());
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                if (!fromUser || video.getDuration() <= 0) return;
+                long positionMs = (long) video.getDuration() * value / 1000L;
+                progress.setText(MediaItem.positionText(positionMs * 10000L) + " / " + MediaItem.positionText(video.getDuration() * 10000L));
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+                userSeeking = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                if (video.getDuration() > 0) {
+                    int positionMs = (int) ((long) video.getDuration() * bar.getProgress() / 1000L);
+                    video.seekTo(positionMs);
+                    item.playbackPositionTicks = positionMs * 10000L;
+                    reportPlaybackProgress(item, !video.isPlaying());
+                }
+                userSeeking = false;
+            }
+        });
         video.setVideoURI(Uri.parse(client.streamUrl(item.id)));
         video.setOnPreparedListener(mp -> {
             mp.setLooping(false);
@@ -467,7 +504,16 @@ public class MainActivity extends Activity {
             }
             video.start();
             reportPlaybackStart(item);
-            startProgressReporter(item, progress);
+            startProgressReporter(item, progress, seekBar);
+        });
+        video.setOnCompletionListener(mp -> {
+            item.played = true;
+            item.playbackPositionTicks = 0;
+            stopProgressReporter();
+            reportPlayback(item, "stop", item.runtimeTicks, true);
+            pause.setText("播放");
+            progress.setText("已播放完成");
+            seekBar.setProgress(1000);
         });
         video.setOnErrorListener((mp, what, extra) -> {
             toast("播放失败: " + what);
@@ -619,7 +665,7 @@ public class MainActivity extends Activity {
         Toast.makeText(this, message == null ? "发生错误" : message, Toast.LENGTH_LONG).show();
     }
 
-    private void startProgressReporter(MediaItem item, TextView progress) {
+    private void startProgressReporter(MediaItem item, TextView progress, SeekBar seekBar) {
         stopProgressReporter();
         progressRunnable = new Runnable() {
             @Override
@@ -628,12 +674,30 @@ public class MainActivity extends Activity {
                 long positionTicks = currentVideo.getCurrentPosition() * 10000L;
                 long durationTicks = currentVideo.getDuration() > 0 ? currentVideo.getDuration() * 10000L : item.runtimeTicks;
                 progress.setText(MediaItem.positionText(positionTicks) + " / " + MediaItem.positionText(durationTicks));
+                if (!userSeeking && currentVideo.getDuration() > 0) {
+                    seekBar.setProgress((int) ((long) currentVideo.getCurrentPosition() * 1000L / currentVideo.getDuration()));
+                }
                 item.playbackPositionTicks = positionTicks;
                 reportPlaybackProgress(item, !currentVideo.isPlaying());
-                progressHandler.postDelayed(this, 10000);
+                progressHandler.postDelayed(this, 1000);
             }
         };
         progressHandler.postDelayed(progressRunnable, 1000);
+    }
+
+    private void seekBy(int deltaMs, MediaItem item, TextView progress, SeekBar seekBar) {
+        if (currentVideo == null) return;
+        int duration = currentVideo.getDuration();
+        int target = currentVideo.getCurrentPosition() + deltaMs;
+        if (target < 0) target = 0;
+        if (duration > 0 && target > duration) target = duration;
+        currentVideo.seekTo(target);
+        long positionTicks = target * 10000L;
+        long durationTicks = duration > 0 ? duration * 10000L : item.runtimeTicks;
+        item.playbackPositionTicks = positionTicks;
+        progress.setText(MediaItem.positionText(positionTicks) + " / " + MediaItem.positionText(durationTicks));
+        if (duration > 0) seekBar.setProgress((int) ((long) target * 1000L / duration));
+        reportPlaybackProgress(item, !currentVideo.isPlaying());
     }
 
     private void stopProgressReporter() {

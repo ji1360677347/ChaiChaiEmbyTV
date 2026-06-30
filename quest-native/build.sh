@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-VERSION_NAME="${VERSION_NAME:-0.3.0}"
-VERSION_CODE="${VERSION_CODE:-3}"
+VERSION_NAME="${VERSION_NAME:-0.4.0}"
+VERSION_CODE="${VERSION_CODE:-4}"
 OUT="${OUT:-$REPO_ROOT/ChaiChaiQuestNative-$VERSION_NAME.apk}"
 
 if [ -z "$SDK" ]; then
